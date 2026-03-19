@@ -695,6 +695,7 @@ mod tests {
     use rstest::*;
 
     use super::*;
+    use crate::crd::scaler::ReplicasConfig;
     use crate::role_utils::{GenericProductSpecificCommonConfig, Role, RoleGroup};
 
     const ROLE_GROUP: &str = "role_group";
@@ -826,7 +827,7 @@ mod tests {
                 ),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: build_common_config(
                         build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                         build_config_override(file_name, GROUP_CONF_OVERRIDE),
@@ -843,7 +844,7 @@ mod tests {
                 ),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: build_common_config(
                         build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI), None, None, None),
                 }},
@@ -857,7 +858,7 @@ mod tests {
                 ),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: build_common_config(
                         build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                         build_config_override(file_name, GROUP_CONF_OVERRIDE),
@@ -874,7 +875,7 @@ mod tests {
                 ),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: build_common_config(
                         build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                         None,
@@ -891,7 +892,7 @@ mod tests {
                 ),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: build_common_config(
                         None,
                         build_config_override(file_name, GROUP_CONF_OVERRIDE),
@@ -908,7 +909,7 @@ mod tests {
                 ),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: CommonConfiguration::default(),
                 }},
             },
@@ -921,7 +922,7 @@ mod tests {
                 ),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: build_common_config(
                         None,
                         build_config_override(file_name, GROUP_CONF_OVERRIDE),
@@ -939,7 +940,7 @@ mod tests {
                 ),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: CommonConfiguration::default(),
                 }},
             },
@@ -952,7 +953,7 @@ mod tests {
                 ),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: build_common_config(
                         build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                         build_config_override(file_name, GROUP_CONF_OVERRIDE),
@@ -969,7 +970,7 @@ mod tests {
                 ),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: build_common_config(
                         build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                         None,
@@ -981,7 +982,7 @@ mod tests {
                 config: CommonConfiguration::default(),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: build_common_config(
                         build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                         build_config_override(file_name, GROUP_CONF_OVERRIDE),
@@ -993,7 +994,7 @@ mod tests {
                 config: CommonConfiguration::default(),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: build_common_config(
                         build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                         None,
@@ -1010,7 +1011,7 @@ mod tests {
                 ),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: build_common_config(
                         None,
                         build_config_override(file_name, GROUP_CONF_OVERRIDE),
@@ -1027,7 +1028,7 @@ mod tests {
                 ),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: CommonConfiguration::default(),
                 }},
             },
@@ -1035,7 +1036,7 @@ mod tests {
                 config: CommonConfiguration::default(),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: build_common_config(
                         None,
                         build_config_override(file_name, GROUP_CONF_OVERRIDE),
@@ -1047,7 +1048,7 @@ mod tests {
                 config: CommonConfiguration::default(),
                 role_config: Default::default(),
                 role_groups: collection! {role_group => RoleGroup {
-                    replicas: Some(1),
+                    replicas: Some(ReplicasConfig::Fixed(1)),
                     config: CommonConfiguration::default(),
                 }},
             },
@@ -1340,7 +1341,7 @@ mod tests {
             ),
             role_config: Default::default(),
             role_groups: collection! {"role_group".to_string() => RoleGroup {
-                replicas: Some(1),
+                replicas: Some(ReplicasConfig::Fixed(1)),
                 config: build_common_config(
                     build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                     Some(group_conf_override),
@@ -1376,7 +1377,7 @@ mod tests {
             ),
             role_config: TestRoleConfig::default(),
             role_groups: collection! {role_group.to_string() => RoleGroup {
-                replicas: Some(1),
+                replicas: Some(ReplicasConfig::Fixed(1)),
                 config: build_common_config(
                     build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                     // should override
@@ -1439,7 +1440,7 @@ mod tests {
             ),
             role_config: Default::default(),
             role_groups: collection! {role_group_1.to_string() => RoleGroup {
-                replicas: Some(1),
+                replicas: Some(ReplicasConfig::Fixed(1)),
                 config: build_common_config(
                     build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                     None,
@@ -1448,7 +1449,7 @@ mod tests {
                 ),
             },
             role_group_2.to_string() => RoleGroup {
-                replicas: Some(1),
+                replicas: Some(ReplicasConfig::Fixed(1)),
                 config: build_common_config(
                     build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                     None,
@@ -1466,7 +1467,7 @@ mod tests {
             ),
             role_config: Default::default(),
             role_groups: collection! {role_group_1.to_string() => RoleGroup {
-                replicas: Some(1),
+                replicas: Some(ReplicasConfig::Fixed(1)),
                 config: build_common_config(
                     build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                     None,
@@ -1532,7 +1533,7 @@ mod tests {
                 role_config: Default::default(),
                 role_groups: collection! {
                     role_group_1.to_string() => RoleGroup {
-                        replicas: Some(1),
+                        replicas: Some(ReplicasConfig::Fixed(1)),
                         config: build_common_config(
                             build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                             None,
@@ -1547,7 +1548,7 @@ mod tests {
                 role_config: Default::default(),
                 role_groups: collection! {
                     role_group_2.to_string() => RoleGroup {
-                        replicas: Some(1),
+                        replicas: Some(ReplicasConfig::Fixed(1)),
                         config: build_common_config(
                             build_test_config(GROUP_CONFIG, GROUP_ENV, GROUP_CLI),
                             None,

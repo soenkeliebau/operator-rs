@@ -99,6 +99,7 @@ use crate::{
         fragment::{self, FromFragment},
         merge::Merge,
     },
+    crd::scaler::ReplicasConfig,
     product_config_utils::Configuration,
     utils::crds::raw_object_schema,
 };
@@ -437,7 +438,7 @@ pub struct EmptyRoleConfig {}
 pub struct RoleGroup<T, ProductSpecificCommonConfig> {
     #[serde(flatten)]
     pub config: CommonConfiguration<T, ProductSpecificCommonConfig>,
-    pub replicas: Option<u16>,
+    pub replicas: Option<ReplicasConfig>,
 }
 
 impl<T, ProductSpecificCommonConfig> RoleGroup<T, ProductSpecificCommonConfig> {
