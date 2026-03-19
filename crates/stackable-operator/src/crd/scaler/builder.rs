@@ -9,7 +9,7 @@ use snafu::{ResultExt, Snafu};
 
 use crate::{
     builder::meta::ObjectMetaBuilder,
-    kvp::{Label, LabelError, Labels, consts::K8S_APP_MANAGED_BY_KEY},
+    kvp::{Label, LabelError, Labels},
 };
 
 use super::v1alpha1::{StackableScaler, StackableScalerSpec};
@@ -40,9 +40,12 @@ pub enum BuildScalerError {
 /// |-----|-------|
 /// | `app.kubernetes.io/name` | `app_name` |
 /// | `app.kubernetes.io/instance` | `cluster_name` |
-/// | `app.kubernetes.io/managed-by` | `managed_by` |
+/// | `app.kubernetes.io/managed-by` | `{operator_name}_{controller_name}` |
 /// | `app.kubernetes.io/component` | `role` |
 /// | `app.kubernetes.io/role-group` | `role_group` |
+///
+/// The `managed-by` label is formatted using [`Label::managed_by`] to match
+/// the convention used by [`ClusterResources`](crate::cluster_resources::ClusterResources).
 ///
 /// # Errors
 ///
@@ -61,7 +64,8 @@ pub fn build_scaler(
     role_group: &str,
     initial_replicas: i32,
     owner_ref: &OwnerReference,
-    managed_by: &str,
+    operator_name: &str,
+    controller_name: &str,
 ) -> Result<StackableScaler, BuildScalerError> {
     let scaler_name = format!("{cluster_name}-{role}-{role_group}-scaler");
 
@@ -69,7 +73,7 @@ pub fn build_scaler(
     let mut labels = Labels::common(app_name, cluster_name).context(LabelSnafu)?;
     labels.insert(Label::component(role).context(LabelSnafu)?);
     labels.insert(Label::role_group(role_group).context(LabelSnafu)?);
-    labels.insert(Label::try_from((K8S_APP_MANAGED_BY_KEY, managed_by)).context(LabelSnafu)?);
+    labels.insert(Label::managed_by(operator_name, controller_name).context(LabelSnafu)?);
 
     let metadata = ObjectMetaBuilder::new()
         .name(&scaler_name)
@@ -115,7 +119,8 @@ mod tests {
             "default",
             3,
             &owner_ref,
-            "nifi-operator",
+            "nifi.stackable.tech",
+            "nificluster",
         )
         .expect("build_scaler should succeed");
 
@@ -133,7 +138,8 @@ mod tests {
             "default",
             1,
             &owner_ref,
-            "nifi-operator",
+            "nifi.stackable.tech",
+            "nificluster",
         )
         .expect("build_scaler should succeed");
 
@@ -159,7 +165,8 @@ mod tests {
             "default",
             1,
             &owner_ref,
-            "nifi-operator",
+            "nifi.stackable.tech",
+            "nificluster",
         )
         .expect("build_scaler should succeed");
 
@@ -181,8 +188,8 @@ mod tests {
         );
         assert_eq!(
             labels.get("app.kubernetes.io/managed-by"),
-            Some(&"nifi-operator".to_string()),
-            "app.kubernetes.io/managed-by should be managed_by"
+            Some(&"nifi.stackable.tech_nificluster".to_string()),
+            "app.kubernetes.io/managed-by should be operator_name + controller_name"
         );
         assert_eq!(
             labels.get("app.kubernetes.io/component"),
@@ -207,7 +214,8 @@ mod tests {
             "workers",
             5,
             &owner_ref,
-            "nifi-operator",
+            "nifi.stackable.tech",
+            "nificluster",
         )
         .expect("build_scaler should succeed");
 
@@ -229,7 +237,8 @@ mod tests {
             "default",
             1,
             &owner_ref,
-            "nifi-operator",
+            "nifi.stackable.tech",
+            "nificluster",
         )
         .expect("build_scaler should succeed");
 

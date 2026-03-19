@@ -9,13 +9,15 @@
 use k8s_openapi::api::autoscaling::v2::{
     CrossVersionObjectReference, HorizontalPodAutoscaler, HorizontalPodAutoscalerSpec,
 };
+
+use super::replicas_config::HpaConfig;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{OwnerReference, Time};
 use k8s_openapi::jiff::Timestamp;
 use snafu::{ResultExt, Snafu};
 
 use crate::builder::meta::ObjectMetaBuilder;
 use crate::client::Client;
-use crate::kvp::{Label, Labels, consts::K8S_APP_MANAGED_BY_KEY};
+use crate::kvp::{Label, Labels};
 
 use super::builder::BuildScalerError;
 use super::v1alpha1::StackableScaler;
@@ -54,8 +56,8 @@ pub fn scale_target_ref(
     }
 }
 
-/// Build a [`HorizontalPodAutoscaler`] from a user-provided spec, overwriting
-/// `scaleTargetRef` so it always points at the correct [`StackableScaler`].
+/// Build a [`HorizontalPodAutoscaler`] from a user-provided [`HpaConfig`],
+/// filling in `scaleTargetRef` so it always points at the correct [`StackableScaler`].
 ///
 /// The generated HPA name follows the convention
 /// `{cluster_name}-{role}-{role_group}-hpa`.
@@ -69,9 +71,12 @@ pub fn scale_target_ref(
 /// |-----|-------|
 /// | `app.kubernetes.io/name` | `app_name` |
 /// | `app.kubernetes.io/instance` | `cluster_name` |
-/// | `app.kubernetes.io/managed-by` | `managed_by` |
+/// | `app.kubernetes.io/managed-by` | `{operator_name}_{controller_name}` |
 /// | `app.kubernetes.io/component` | `role` |
 /// | `app.kubernetes.io/role-group` | `role_group` |
+///
+/// The `managed-by` label is formatted using [`Label::managed_by`] to match
+/// the convention used by [`ClusterResources`](crate::cluster_resources::ClusterResources).
 ///
 /// # Errors
 ///
@@ -83,7 +88,7 @@ pub fn scale_target_ref(
 // since callers already have each value as a separate variable.
 #[allow(clippy::too_many_arguments)]
 pub fn build_hpa_from_user_spec(
-    user_spec: &HorizontalPodAutoscalerSpec,
+    hpa_config: &HpaConfig,
     target_ref: &CrossVersionObjectReference,
     cluster_name: &str,
     app_name: &str,
@@ -91,7 +96,8 @@ pub fn build_hpa_from_user_spec(
     role: &str,
     role_group: &str,
     owner_ref: &OwnerReference,
-    managed_by: &str,
+    operator_name: &str,
+    controller_name: &str,
 ) -> Result<HorizontalPodAutoscaler, BuildScalerError> {
     let hpa_name = format!("{cluster_name}-{role}-{role_group}-hpa");
 
@@ -99,8 +105,7 @@ pub fn build_hpa_from_user_spec(
     labels.insert(Label::component(role).context(super::builder::LabelSnafu)?);
     labels.insert(Label::role_group(role_group).context(super::builder::LabelSnafu)?);
     labels.insert(
-        Label::try_from((K8S_APP_MANAGED_BY_KEY, managed_by))
-            .context(super::builder::LabelSnafu)?,
+        Label::managed_by(operator_name, controller_name).context(super::builder::LabelSnafu)?,
     );
 
     let metadata = ObjectMetaBuilder::new()
@@ -110,8 +115,13 @@ pub fn build_hpa_from_user_spec(
         .with_labels(labels)
         .build();
 
-    let mut spec = user_spec.clone();
-    spec.scale_target_ref = target_ref.clone();
+    let spec = HorizontalPodAutoscalerSpec {
+        max_replicas: hpa_config.max_replicas,
+        min_replicas: hpa_config.min_replicas,
+        metrics: hpa_config.metrics.clone(),
+        behavior: hpa_config.behavior.clone(),
+        scale_target_ref: target_ref.clone(),
+    };
 
     Ok(HorizontalPodAutoscaler {
         metadata,
@@ -164,9 +174,7 @@ pub async fn initialize_scaler_status(
 
 #[cfg(test)]
 mod tests {
-    use k8s_openapi::api::autoscaling::v2::{
-        CrossVersionObjectReference, HorizontalPodAutoscalerSpec,
-    };
+    use k8s_openapi::api::autoscaling::v2::CrossVersionObjectReference;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference;
 
     use super::*;
@@ -190,6 +198,15 @@ mod tests {
         )
     }
 
+    fn test_hpa_config() -> HpaConfig {
+        HpaConfig {
+            max_replicas: 10,
+            min_replicas: Some(1),
+            metrics: None,
+            behavior: None,
+        }
+    }
+
     #[test]
     fn scale_target_ref_points_to_scaler() {
         let target = scale_target_ref(
@@ -207,21 +224,12 @@ mod tests {
     }
 
     #[test]
-    fn build_hpa_overwrites_scale_target_ref() {
-        let wrong_ref = CrossVersionObjectReference {
-            kind: "Deployment".to_string(),
-            name: "wrong-target".to_string(),
-            api_version: Some("apps/v1".to_string()),
-        };
-        let user_spec = HorizontalPodAutoscalerSpec {
-            max_replicas: 10,
-            scale_target_ref: wrong_ref,
-            ..Default::default()
-        };
+    fn build_hpa_sets_scale_target_ref() {
+        let config = test_hpa_config();
         let correct_ref = test_target_ref();
 
         let hpa = build_hpa_from_user_spec(
-            &user_spec,
+            &config,
             &correct_ref,
             "my-nifi",
             "nifi",
@@ -229,7 +237,8 @@ mod tests {
             "nodes",
             "default",
             &test_owner_ref(),
-            "nifi-operator",
+            "nifi.stackable.tech",
+            "nificluster",
         )
         .expect("build_hpa_from_user_spec should succeed");
 
@@ -240,25 +249,22 @@ mod tests {
             spec.scale_target_ref.api_version.as_deref(),
             Some("autoscaling.stackable.tech/v1alpha1")
         );
-        // Original max_replicas should be preserved.
         assert_eq!(spec.max_replicas, 10);
+        assert_eq!(spec.min_replicas, Some(1));
     }
 
     #[test]
     fn build_hpa_sets_required_labels() {
-        let user_spec = HorizontalPodAutoscalerSpec {
+        let config = HpaConfig {
             max_replicas: 5,
-            scale_target_ref: CrossVersionObjectReference {
-                kind: "Deployment".to_string(),
-                name: "placeholder".to_string(),
-                api_version: None,
-            },
-            ..Default::default()
+            min_replicas: None,
+            metrics: None,
+            behavior: None,
         };
         let target_ref = test_target_ref();
 
         let hpa = build_hpa_from_user_spec(
-            &user_spec,
+            &config,
             &target_ref,
             "my-nifi",
             "nifi",
@@ -266,7 +272,8 @@ mod tests {
             "nodes",
             "workers",
             &test_owner_ref(),
-            "nifi-operator",
+            "nifi.stackable.tech",
+            "nificluster",
         )
         .expect("build_hpa_from_user_spec should succeed");
 
@@ -284,8 +291,8 @@ mod tests {
         );
         assert_eq!(
             labels.get("app.kubernetes.io/managed-by"),
-            Some(&"nifi-operator".to_string()),
-            "app.kubernetes.io/managed-by should be managed_by"
+            Some(&"nifi.stackable.tech_nificluster".to_string()),
+            "app.kubernetes.io/managed-by should be operator_name + controller_name"
         );
         assert_eq!(
             labels.get("app.kubernetes.io/component"),
@@ -301,19 +308,16 @@ mod tests {
 
     #[test]
     fn build_hpa_generates_correct_name() {
-        let user_spec = HorizontalPodAutoscalerSpec {
+        let config = HpaConfig {
             max_replicas: 5,
-            scale_target_ref: CrossVersionObjectReference {
-                kind: "Deployment".to_string(),
-                name: "placeholder".to_string(),
-                api_version: None,
-            },
-            ..Default::default()
+            min_replicas: None,
+            metrics: None,
+            behavior: None,
         };
         let target_ref = test_target_ref();
 
         let hpa = build_hpa_from_user_spec(
-            &user_spec,
+            &config,
             &target_ref,
             "my-nifi",
             "nifi",
@@ -321,7 +325,8 @@ mod tests {
             "nodes",
             "workers",
             &test_owner_ref(),
-            "nifi-operator",
+            "nifi.stackable.tech",
+            "nificluster",
         )
         .expect("build_hpa_from_user_spec should succeed");
 

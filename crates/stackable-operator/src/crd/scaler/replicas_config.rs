@@ -6,7 +6,7 @@
 
 use std::borrow::Cow;
 
-use k8s_openapi::api::autoscaling::v2::HorizontalPodAutoscalerSpec;
+use k8s_openapi::api::autoscaling::v2::{HorizontalPodAutoscalerBehavior, MetricSpec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
@@ -33,15 +33,53 @@ pub enum ValidationError {
         /// The maximum replica count that was less than `min`.
         max: u16,
     },
+
+    /// The `max_replicas` field in [`HpaConfig`] must be at least 1.
+    #[snafu(display("hpa max_replicas must be at least 1, got {max}"))]
+    HpaMaxZero {
+        /// The invalid maximum replica count.
+        max: i32,
+    },
+
+    /// The `min_replicas` field in [`HpaConfig`] must be at least 1 when set.
+    #[snafu(display("hpa min_replicas must be at least 1, got {min}"))]
+    HpaMinZero {
+        /// The invalid minimum replica count.
+        min: i32,
+    },
+
+    /// The `max_replicas` must be greater than or equal to `min_replicas` in [`HpaConfig`].
+    #[snafu(display("hpa max_replicas ({max}) must be >= min_replicas ({min})"))]
+    HpaMaxLessThanMin {
+        /// The minimum replica count.
+        min: i32,
+        /// The maximum replica count that was less than `min`.
+        max: i32,
+    },
 }
 
-/// Configuration for a Kubernetes `HorizontalPodAutoscaler` that manages the role group.
+/// User-facing configuration for a Kubernetes `HorizontalPodAutoscaler`.
+///
+/// This struct exposes only the fields that users should set. The operator
+/// fills in `scaleTargetRef` (pointing at the [`StackableScaler`](super::v1alpha1::StackableScaler))
+/// when building the actual `HorizontalPodAutoscaler` object.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HpaConfig {
-    /// The HPA spec to apply. The `scaleTargetRef` and `minReplicas` fields are managed
-    /// by the operator and will be overwritten.
-    pub spec: HorizontalPodAutoscalerSpec,
+    /// Maximum number of replicas the HPA may scale up to.
+    pub max_replicas: i32,
+
+    /// Minimum number of replicas the HPA may scale down to. Defaults to 1 if omitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_replicas: Option<i32>,
+
+    /// Metrics used to compute the desired replica count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<Vec<MetricSpec>>,
+
+    /// Scaling behavior configuration (scale-up / scale-down policies).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behavior: Option<HorizontalPodAutoscalerBehavior>,
 }
 
 /// Configuration for Stackable-managed auto-scaling.
@@ -96,6 +134,9 @@ impl ReplicasConfig {
     /// Returns [`ValidationError::FixedZero`] if the variant is `Fixed(0)`.
     /// Returns [`ValidationError::AutoMinZero`] if `min_replicas` is 0.
     /// Returns [`ValidationError::AutoMaxLessThanMin`] if `max_replicas < min_replicas`.
+    /// Returns [`ValidationError::HpaMaxZero`] if `max_replicas < 1`.
+    /// Returns [`ValidationError::HpaMinZero`] if `min_replicas` is set and less than 1.
+    /// Returns [`ValidationError::HpaMaxLessThanMin`] if `max_replicas < min_replicas`.
     pub fn validate(&self) -> Result<(), ValidationError> {
         match self {
             Self::Fixed(0) => FixedZeroSnafu.fail(),
@@ -108,6 +149,21 @@ impl ReplicasConfig {
                 max: cfg.max_replicas,
             }
             .fail(),
+            Self::Hpa(cfg) if cfg.max_replicas < 1 => HpaMaxZeroSnafu {
+                max: cfg.max_replicas,
+            }
+            .fail(),
+            Self::Hpa(cfg) if matches!(cfg.min_replicas, Some(min) if min < 1) => HpaMinZeroSnafu {
+                min: cfg.min_replicas.unwrap_or(0),
+            }
+            .fail(),
+            Self::Hpa(cfg) if matches!(cfg.min_replicas, Some(min) if cfg.max_replicas < min) => {
+                HpaMaxLessThanMinSnafu {
+                    min: cfg.min_replicas.unwrap_or(0),
+                    max: cfg.max_replicas,
+                }
+                .fail()
+            }
             _ => Ok(()),
         }
     }
@@ -119,21 +175,16 @@ impl JsonSchema for ReplicasConfig {
     }
 
     fn json_schema(generator: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
+        // All variants use the object instance type so the Stackable CRD generator
+        // (which requires a uniform instance type across oneOf branches) can produce
+        // a valid structural schema.  The custom Deserialize impl additionally accepts
+        // bare integers and the string "externallyScaled" for ergonomics, but those
+        // forms are not advertised here.
         schemars::json_schema!({
             "description": "Replica configuration for a role group.",
             "oneOf": [
                 {
-                    "description": "Fixed replica count (bare integer).",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                {
-                    "description": "Externally managed replicas.",
-                    "type": "string",
-                    "const": "externallyScaled"
-                },
-                {
-                    "description": "Fixed replica count (object form).",
+                    "description": "Fixed replica count.",
                     "type": "object",
                     "required": ["fixed"],
                     "properties": {
@@ -156,6 +207,15 @@ impl JsonSchema for ReplicasConfig {
                     "required": ["auto"],
                     "properties": {
                         "auto": generator.subschema_for::<AutoConfig>()
+                    },
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Externally managed replicas.",
+                    "type": "object",
+                    "required": ["externallyScaled"],
+                    "properties": {
+                        "externallyScaled": { "type": "object" }
                     },
                     "additionalProperties": false
                 }
@@ -220,15 +280,23 @@ impl<'de> Deserialize<'de> for ReplicasConfig {
                         let value: AutoConfig = map.next_value()?;
                         ReplicasConfig::Auto(value)
                     }
+                    "externallyScaled" => {
+                        // Consume and discard the value (expected to be an empty object/null).
+                        map.next_value::<de::IgnoredAny>()?;
+                        ReplicasConfig::ExternallyScaled
+                    }
                     other => {
-                        return Err(de::Error::unknown_field(other, &["fixed", "hpa", "auto"]));
+                        return Err(de::Error::unknown_field(
+                            other,
+                            &["fixed", "hpa", "auto", "externallyScaled"],
+                        ));
                     }
                 };
 
                 // Drain remaining keys to ensure no extra fields.
                 if map.next_key::<String>()?.is_some() {
                     return Err(de::Error::custom(
-                        "expected exactly one key (\"fixed\", \"hpa\", or \"auto\")",
+                        "expected exactly one key (\"fixed\", \"hpa\", \"auto\", or \"externallyScaled\")",
                     ));
                 }
 
@@ -258,18 +326,30 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_externally_scaled() {
+    fn deserialize_externally_scaled_string() {
         let config: ReplicasConfig =
             serde_json::from_str(r#""externallyScaled""#).expect("should parse string variant");
         assert_eq!(config, ReplicasConfig::ExternallyScaled);
     }
 
     #[test]
-    fn deserialize_hpa() {
+    fn deserialize_externally_scaled_object() {
         let config: ReplicasConfig =
-            serde_json::from_str(r#"{"hpa": {"spec": {"maxReplicas": 10}}}"#)
-                .expect("should parse hpa object");
+            serde_json::from_str(r#"{"externallyScaled": {}}"#).expect("should parse object form");
+        assert_eq!(config, ReplicasConfig::ExternallyScaled);
+    }
+
+    #[test]
+    fn deserialize_hpa() {
+        let config: ReplicasConfig = serde_json::from_str(r#"{"hpa": {"maxReplicas": 10}}"#)
+            .expect("should parse hpa object");
         assert!(matches!(config, ReplicasConfig::Hpa(..)));
+        if let ReplicasConfig::Hpa(hpa) = &config {
+            assert_eq!(hpa.max_replicas, 10);
+            assert_eq!(hpa.min_replicas, None);
+            assert!(hpa.metrics.is_none());
+            assert!(hpa.behavior.is_none());
+        }
     }
 
     #[test]
@@ -314,6 +394,56 @@ mod tests {
             result,
             Err(ValidationError::AutoMaxLessThanMin { .. })
         ));
+    }
+
+    #[test]
+    fn hpa_max_zero_is_invalid() {
+        let config = ReplicasConfig::Hpa(Box::new(HpaConfig {
+            max_replicas: 0,
+            min_replicas: None,
+            metrics: None,
+            behavior: None,
+        }));
+        let result = config.validate();
+        assert!(matches!(result, Err(ValidationError::HpaMaxZero { .. })));
+    }
+
+    #[test]
+    fn hpa_min_zero_is_invalid() {
+        let config = ReplicasConfig::Hpa(Box::new(HpaConfig {
+            max_replicas: 5,
+            min_replicas: Some(0),
+            metrics: None,
+            behavior: None,
+        }));
+        let result = config.validate();
+        assert!(matches!(result, Err(ValidationError::HpaMinZero { .. })));
+    }
+
+    #[test]
+    fn hpa_max_less_than_min_is_invalid() {
+        let config = ReplicasConfig::Hpa(Box::new(HpaConfig {
+            max_replicas: 2,
+            min_replicas: Some(5),
+            metrics: None,
+            behavior: None,
+        }));
+        let result = config.validate();
+        assert!(matches!(
+            result,
+            Err(ValidationError::HpaMaxLessThanMin { .. })
+        ));
+    }
+
+    #[test]
+    fn hpa_valid_config_passes_validation() {
+        let config = ReplicasConfig::Hpa(Box::new(HpaConfig {
+            max_replicas: 10,
+            min_replicas: Some(2),
+            metrics: None,
+            behavior: None,
+        }));
+        assert!(config.validate().is_ok());
     }
 
     #[test]
